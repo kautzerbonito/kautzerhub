@@ -1,0 +1,217 @@
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
+
+local Window = Library.CreateLib("kautzer hub", "DarkTheme")
+local GameTab = Window:NewTab("Game")
+local GameSection = GameTab:NewSection("Game Options")
+
+local UniversalTab = Window:NewTab("Universal")
+local UniversalSection = UniversalTab:NewSection("Universal Options")
+
+local headSize = Vector3.new(10, 10, 10)
+local transparency = 0.7
+local brickColor = BrickColor.new("Really black")
+local material = Enum.Material.Neon
+local canCollide = false
+
+local playersModifications = {}
+local isToggleOn = false
+local infiniteJumpEnabled = false
+local espEnabled = false
+local espInstances = {}
+
+local aimlockEnabled = false
+local aimlockPrediction = 0.1 -- Default prediction value
+
+local Settings = {
+    CFSpeed = {
+        Speed = 0.4, -- Initial speed at which the player moves
+        Enabled = false, -- Whether the movement is enabled
+        NormalFOV = 70, -- Default FOV value
+        BoostFOV = 110, -- FOV during speed boost
+        FOVTweenTime = 0.5 -- Duration of the FOV transition
+    }
+}
+
+local tweenService = game:GetService("TweenService")
+local camera = workspace.CurrentCamera
+
+local function applyModifications(player)
+    pcall(function()
+        local humanoidRootPart = player.Character and player.Character:FindFirstChild('HumanoidRootPart')
+        if humanoidRootPart then
+            if not playersModifications[player] then
+                playersModifications[player] = {
+                    Size = humanoidRootPart.Size,
+                    Transparency = humanoidRootPart.Transparency,
+                    BrickColor = humanoidRootPart.BrickColor,
+                    Material = humanoidRootPart.Material,
+                    CanCollide = humanoidRootPart.CanCollide
+                }
+            end
+
+            humanoidRootPart.Size = headSize
+            humanoidRootPart.Transparency = transparency
+            humanoidRootPart.BrickColor = brickColor
+            humanoidRootPart.Material = material
+            humanoidRootPart.CanCollide = canCollide
+        end
+    end)
+end
+
+local function restoreOriginalProperties(player)
+    pcall(function()
+        local humanoidRootPart = player.Character and player.Character:FindFirstChild('HumanoidRootPart')
+        if humanoidRootPart and playersModifications[player] then
+            humanoidRootPart.Size = playersModifications[player].Size
+            humanoidRootPart.Transparency = playersModifications[player].Transparency
+            humanoidRootPart.BrickColor = playersModifications[player].BrickColor
+            humanoidRootPart.Material = playersModifications[player].Material
+            humanoidRootPart.CanCollide = playersModifications[player].CanCollide
+
+            playersModifications[player] = nil
+        end
+    end)
+end
+
+local function applyModificationsToAllPlayers()
+    for _, player in ipairs(game:GetService('Players'):GetPlayers()) do
+        if player ~= game:GetService('Players').LocalPlayer then
+            applyModifications(player)
+        end
+    end
+end
+
+local function restoreOriginalPropertiesForAllPlayers()
+    for _, player in ipairs(game:GetService('Players'):GetPlayers()) do
+        if player ~= game:GetService('Players').LocalPlayer then
+            restoreOriginalProperties(player)
+        end
+    end
+end
+
+local function toggleSpeedMovement()
+    local runService = game:GetService("RunService")
+    while Settings.CFSpeed.Enabled do
+        local character = game.Players.LocalPlayer.Character
+        if character and character:FindFirstChild("HumanoidRootPart") then
+            local humanoidRootPart = character.HumanoidRootPart
+            local moveDirection = game.Players.LocalPlayer.Character.Humanoid.MoveDirection
+            if moveDirection.Magnitude > 0 then
+                local targetPosition = humanoidRootPart.CFrame + moveDirection * Settings.CFSpeed.Speed
+                -- Smoothly interpolate towards the target position
+                humanoidRootPart.CFrame = humanoidRootPart.CFrame:Lerp(targetPosition, 0.25)
+            end
+        end
+        runService.Heartbeat:Wait()
+    end
+end
+
+
+local function setFOV(targetFOV)
+    local tweenInfo = TweenInfo.new(Settings.CFSpeed.FOVTweenTime, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut)
+    local tweenGoal = { FieldOfView = targetFOV }
+    local tween = tweenService:Create(camera, tweenInfo, tweenGoal)
+    tween:Play()
+end
+
+local SpeedTab = Window:NewTab("Speed Control")
+local SpeedSection = SpeedTab:NewSection("Speed Options")
+
+SpeedSection:NewToggle("Speed Boost", "Toggle speed boost", function(state)
+    Settings.CFSpeed.Enabled = state
+    if state then
+        setFOV(Settings.CFSpeed.BoostFOV)
+        coroutine.wrap(toggleSpeedMovement)()
+    else
+        setFOV(Settings.CFSpeed.NormalFOV)
+    end
+end)
+
+SpeedSection:NewSlider("Speed", "Adjust speed multiplier", 40, 1, function(value)
+    Settings.CFSpeed.Speed = value / 5 -- Convert slider value to 0.1 - 2 range
+end)
+
+SpeedSection:NewSlider("FOV", "Field of View Slider", 120, 70, function(sliderValue)
+    if camera then
+        camera.FieldOfView = sliderValue
+    end
+end)
+
+local function handleKeyboardInput()
+    game:GetService('UserInputService').InputBegan:Connect(function(input, gameProcessed)
+        if not gameProcessed then
+            if input.KeyCode == Enum.KeyCode.C then
+                if aimlockEnabled then
+                    aimLock()
+                end
+            end
+        end
+    end)
+end
+
+local function applyModificationsPeriodically()
+    while isToggleOn do
+        wait(0.1)
+        if isToggleOn then
+            applyModificationsToAllPlayers()
+        end
+    end
+end
+
+local function setupPlayer(player)
+    player.CharacterAdded:Connect(function(character)
+        if isToggleOn then
+            applyModifications(player)
+        end
+        updateESP()
+    end)
+    if isToggleOn and player.Character then
+        applyModifications(player)
+    end
+end
+
+game:GetService('Players').PlayerAdded:Connect(function(player)
+    setupPlayer(player)
+end)
+
+game:GetService('Players').PlayerRemoving:Connect(function(player)
+    if espInstances[player] then
+        espInstances[player]:Destroy()
+        espInstances[player] = nil
+    end
+    restoreOriginalProperties(player)
+end)
+
+for _, player in ipairs(game:GetService('Players'):GetPlayers()) do
+    setupPlayer(player)
+end
+
+handleKeyboardInput()
+
+GameSection:NewToggle("Hitbox Enlarger", "Makes hitbox bigger", function(state)
+    isToggleOn = state
+    if state then
+        applyModificationsToAllPlayers()
+        coroutine.wrap(applyModificationsPeriodically)()
+    else
+        restoreOriginalPropertiesForAllPlayers()
+    end
+end)
+
+UniversalSection:NewToggle("Inf Jump", "Enables infinite jumping", function(state)
+    infiniteJumpEnabled = state
+    if state then
+        print("Infinite Jump Enabled")
+    else
+        print("Infinite Jump Disabled")
+    end
+end)
+
+game:GetService("UserInputService").JumpRequest:Connect(function()
+    if infiniteJumpEnabled then
+        local player = game:GetService('Players').LocalPlayer
+        if player and player.Character and player.Character:FindFirstChildOfClass('Humanoid') then
+            player.Character:FindFirstChildOfClass('Humanoid'):ChangeState("Jumping")
+        end
+    end
+end)
